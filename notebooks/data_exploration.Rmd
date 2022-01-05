@@ -1,0 +1,92 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE}
+library(leaflet)
+library(leafgl)
+library(sf)
+library(tidyverse)
+library(htmltools)
+```
+
+```{r}
+roads <- st_read("../data/kx-nashville-tennessee-road-centerlines/nashville-tennessee-road-centerlines.shp", as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84')
+```
+
+```{r}
+interstates <- roads %>% filter(Class %in% c(1,2))
+highways <- roads %>% filter(Class %in% c(3,4))
+main_roads <- roads %>% filter(Class %in% c(5))
+small_roads <- roads %>% filter(Class %in% c(6,7))
+```
+
+```{r}
+map_1 <- leaflet(options = leafletOptions(minZoom = 9, dragging = TRUE)) %>%
+  addProviderTiles(provider = "CartoDB.PositronNoLabels") %>%
+  setView(lng = -86.7816, lat = 36.1627, zoom = 10) %>%
+  setMaxBounds(lng1 = -86.7816 + 1, 
+               lat1 = 36.1627 + 1, 
+               lng2 = -86.7816 - 1, 
+               lat2 = 36.1627 - 1) %>%
+  addPolylines(data = small_roads, color = "lightgrey", opacity = 0.75, weight = 0.5) %>%
+  addPolylines(data = highways, color = "grey", opacity = 0.5, weight = 1) %>%
+  addPolylines(data = main_roads, color = "lightgrey", opacity = 1, weight = 0.5) %>%
+  addPolylines(data = interstates, color = "#F6CF65", opacity = 0.8, weight = 2)
+
+map_1
+```
+
+```{r}
+accidents <- st_read("../data/traffic_accidents_2021_11_23/geo_export_843312ea-42b0-4c02-a5a6-277108a3e379.shp", as_tibble = T, quiet = T) %>%
+    st_transform('+proj=longlat +datum=WGS84')
+
+colnames(accidents) <- 
+  c("accident_n", "date", "time", "motor_vehicles_n", "injuries_n", "fatalities_n",
+    "property_damage", "hit_and_run", "reporting_officer", "collision_type_code",
+    "collision_type_desc", "weather_code", "weather_desc", "illumination_code",
+    "illumination_desc", "harmful_code", "harmful_desc", "street_address", "city",
+    "state", "zip", "rpa", "precinct", "lat", "long", "geometry")
+```
+
+```{r}
+accidents_filtered <- accidents %>% 
+  filter(st_is_valid(.)) %>%
+  filter(!geometry %in% st_sfc(st_point(c(NaN, NaN)))) %>%
+  filter(!geometry %in% st_sfc(st_point(c(0, 0)))) %>%
+  sample_n(500)
+
+accidents_filtered$label <- 
+  paste0("<b>Date:</b> ", accidents_filtered$date, "<br>",
+         "<b>Time:</b> ", accidents_filtered$time, "<br>", 
+         "<b>Street Address:</b> ", accidents_filtered$street_address, "<br>",
+         "<b>Harmful Description:</b> ", accidents_filtered$harmful_desc) %>%
+  lapply(htmltools::HTML)
+```
+
+```{r}
+map_2 <- leaflet(options = leafletOptions(minZoom = 9, dragging = TRUE)) %>%
+  addProviderTiles(provider = "CartoDB.VoyagerNoLabels") %>% 
+  addProviderTiles(provider = "CartoDB.Voyager", options = providerTileOptions(opacity = 0.5)) %>%
+  setView(lng = -86.7816, lat = 36.1627, zoom = 10) %>%
+  setMaxBounds(lng1 = -86.7816 + 1, 
+               lat1 = 36.1627 + 1, 
+               lng2 = -86.7816 - 1, 
+               lat2 = 36.1627 - 1) %>%
+  addCircleMarkers(data = accidents_filtered,
+                   weight = 0.5,
+                   radius = 2,
+                   fillColor = "red",
+                   fillOpacity = 0.75,
+                   color = "white",
+                   label = ~label)
+
+map_2
+```
+
+```{r}
+nearest <- st_nearest_feature(accidents, roads)
+accidents_mapped <- bind_cols(accidents %>% st_drop_geometry(), roads[nearest, ])
+```
