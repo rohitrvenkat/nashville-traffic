@@ -13,6 +13,34 @@ library(htmltools)
 ```
 
 ```{r}
+accidents_1 <- st_read("../data/traffic_accidents_2021_11_23/geo_export_843312ea-42b0-4c02-a5a6-277108a3e379.shp", as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  filter(!st_is_empty(.)) %>%
+  filter(!geometry %in% st_sfc(st_point(c(0, 0))))
+
+accidents_2 <- st_read("../data/traffic_accidents_2022_01_11/geo_export_80ccc574-077c-4ad8-b6d5-668c371ae1f9.shp", as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  filter(!st_is_empty(.)) %>%
+  filter(!geometry %in% st_sfc(st_point(c(0, 0))))
+
+accidents <- bind_rows(accidents_1, accidents_2) %>% 
+  distinct(accident_n, .keep_all = T)
+
+colnames(accidents) <-
+  c("accident_n", "date", "time", "motor_vehicles_n", "injuries_n", "fatalities_n",
+    "property_damage", "hit_and_run", "reporting_officer", "collision_type_code",
+    "collision_type_desc", "weather_code", "weather_desc", "illumination_code",
+    "illumination_desc", "harmful_code", "harmful_desc", "street_address", "city",
+    "state", "zip", "rpa", "precinct", "lat", "long", "geometry")
+
+accidents <- accidents %>%
+  mutate(year = year(date), month = month(date), day = day(date), .after = date) %>%
+  filter(year < 2022) %>%
+  mutate(injury = injuries_n > 0, .after = injuries_n) %>%
+  mutate(hit_and_run = as.logical(hit_and_run))
+```
+
+```{r}
 roads <- st_read("../data/kx-nashville-tennessee-road-centerlines/nashville-tennessee-road-centerlines.shp", as_tibble = T, quiet = T) %>%
   st_transform('+proj=longlat +datum=WGS84')
 
@@ -33,126 +61,37 @@ roads <- roads %>%
   select(transport_edge_id, seq_id, full_name, prefix_dir, name, suffix_type, 
          suffix_dir, from_maint, to_maint, speed_limit, driving_time, class, 
          min_width, st_length)
-
-interstates <- roads %>% filter(class %in% c(1,2))
-highways <- roads %>% filter(class %in% c(3,4))
-main_roads <- roads %>% filter(class %in% c(5))
-small_roads <- roads %>% filter(class %in% c(6,7))
 ```
 
 ```{r}
-accidents <- st_read("../data/traffic_accidents_2021_11_23/geo_export_843312ea-42b0-4c02-a5a6-277108a3e379.shp", as_tibble = T, quiet = T) %>%
-  st_transform('+proj=longlat +datum=WGS84') %>%
-  filter(!st_is_empty(.)) %>%
-  filter(!geometry %in% st_sfc(st_point(c(0, 0))))
-
-colnames(accidents) <-
-  c("accident_n", "date", "time", "motor_vehicles_n", "injuries_n", "fatalities_n",
-    "property_damage", "hit_and_run", "reporting_officer", "collision_type_code",
-    "collision_type_desc", "weather_code", "weather_desc", "illumination_code",
-    "illumination_desc", "harmful_code", "harmful_desc", "street_address", "city",
-    "state", "zip", "rpa", "precinct", "lat", "long", "geometry")
-
-accidents <- accidents %>%
-  mutate(year = year(date), month = month(date), day = day(date), .after = date)
-
-# 'Collision Type Code': 'Collision Type Description'
-# 0: NOT COLLISION W/MOTOR VEHICLE-TRANSPORT
-# 1: REAR END
-# 2: HEAD-ON
-# 3: REAR-TO-REAR
-# 4: ANGLE
-# 5: SIDESWIPE - SAME DIRECTION
-# 6: SIDESWIPE - OPPOSITE DIRECTION
-# 7: NaN
-# 9: UNKNOWN
-# 11: Front to Rear
-# 16 Rear to Side
-# 98: OTHER
-# 99: NaN
-
-# 'Harmful Code': 'Harmful Description'
-# 01: OVERTURN
-# 02: FIRE/EXPLOSION
-# 04: JACKKNIFE
-# 05: FELL/JUMPED FROM VEHICLE
-# 07: OTHER NON-COLLISION
-# 08: PEDESTRIAN
-# 09: PEDALCYCLE
-# 1: NaN
-# 10: RAILWAY TRAIN
-# 11: OTHER ANIMAL
-# 12: MOTOR VEHICLE IN TRANSPORT
-# 13: MOTOR VEHICLE IN TRANSPORT-OTHER ROADWAY
-# 14: PARKED MOTOR VEHICLE
-# 15: OTHER TYPE NON-MOTORIST
-# 16: THROWN OR FALLING OBJECT
-# 17: BOULDER
-# 18: OTHER OBJECT (NOT FIXED)
-# 19: Building
-# 2: NaN
-# 20: IMPACT ATTENUATOR
-# 21: BRIDGE PIER/ABUTMENT
-# 22: BRIDGE PARPET END
-# 23: BRIDGE RAIL
-# 24: GUARDRAIL FACE
-# 25: GUARDRAIL END
-# 26: MEDIAN BARRIER
-# 27: H-WAY TRAFFIC SIGNAL POST
-# 28: OVERHEAD SIGN SUPPORT
-# 29: LUMINAIRE/LIGHT SUPPORT
-# 3: NaN
-# 30: UTILITY POLE
-# 31: OTHER POST, POLE, SUPP.
-# 32: CULVERT
-# 33: CURB
-# 34: DITCH
-# 35: EMBANKMENT
-# 36: CONCRETE TRAFFIC BARRIER 
-# 37: Other Traffic Barrier
-# 38: FENCE
-# 39: WALL
-# 4: NaN
-# 40: MAIL BOX
-# 41: SHRUBBERY
-# 42: TREE
-# 43: OTHER FIXED OBJECTS
-# 44: PAVED SURFACE-IRREGULAR
-# 45: WORKING MOTOR VEHICLE
-# 46: TRAFFIC SIGNAL SUPPORT
-# 47: FIRE HYDRANT
-# 48: SNOW BANK
-# 49: Ridden Animal/Drawn Conveyance
-# 5: NaN
-# 50: DEER (ANIMAL)
-# 54: Set In Motion By Motor Vehicle
-# 55: Vehicle-In-Motion Outside Traffic
-# 57: Cable Barrier
-# 6: NaN
-# 60: Cargo Equip Loss/Shift
-# 63: Ran Off Road-Right
-# 64: Ran Off Road-Left
-# 7: NaN
-# 71: EMBANKMENT EARTH
-# 72: EMBANKMENT ROCK/STONE/CONCRETE
-# 73: EMBANKMENT MATERIAL UNKNOWN
-# 74: Occupant Struck By Own Vehicle
-# 75: Bridge/Overhead Structure
-# 8: PEDESTRIAN
-# 9: NaN
-# 99: UNKNOWN MOST HARMFUL EVENT
+nearest <- st_nearest_feature(accidents, roads)
+accidents_to_roads <- bind_cols(accidents %>% st_drop_geometry(), roads[nearest, ])
 ```
 
 ```{r}
-accidents_filtered <- accidents %>% 
-  sample_n(500)
+saveRDS(accidents, "../shiny_app/data/accidents.rds")
+saveRDS(roads, "../shiny_app/data/roads.rds")
+saveRDS(accidents_to_roads, "../shiny_app/data/accidents_to_roads.rds")
+```
+
+```{r}
+accidents_filtered <- accidents %>%
+  sample_n(1000)
 
 accidents_filtered$label <- 
   paste0("<b>Date:</b> ", accidents_filtered$date, "<br>",
          "<b>Time:</b> ", accidents_filtered$time, "<br>", 
          "<b>Street Address:</b> ", accidents_filtered$street_address, "<br>",
-         "<b>Harmful Description:</b> ", accidents_filtered$harmful_desc) %>%
+         "<b>Harmful Description:</b> ", accidents_filtered$harmful_desc, "<br>",
+         "<b>Collision Type Description:</b> ", accidents_filtered$collision_type_desc, "<br>",
+         "<b>Number of Vehicles:</b> ", accidents_filtered$motor_vehicles_n, "<br>",
+         "<b>Number of Injuries:</b> ", accidents_filtered$injuries_n) %>%
   lapply(htmltools::HTML)
+
+interstates <- roads %>% filter(class %in% c(1,2))
+highways <- roads %>% filter(class %in% c(3,4))
+main_roads <- roads %>% filter(class %in% c(5))
+small_roads <- roads %>% filter(class %in% c(6,7))
 
 map <- leaflet(options = leafletOptions(minZoom = 10, dragging = TRUE)) %>%
   addProviderTiles(provider = "CartoDB.PositronNoLabels") %>%
@@ -162,8 +101,8 @@ map <- leaflet(options = leafletOptions(minZoom = 10, dragging = TRUE)) %>%
                lng2 = -86.7816 - 1, 
                lat2 = 36.1627 - 1) %>%
   addPolylines(data = small_roads, color = "lightgrey", opacity = 0.75, weight = 0.5) %>%
-  addPolylines(data = highways, color = "grey", opacity = 0.5, weight = 1) %>%
   addPolylines(data = main_roads, color = "lightgrey", opacity = 1, weight = 0.5) %>%
+  addPolylines(data = highways, color = "grey", opacity = 0.5, weight = 1) %>%
   addPolylines(data = interstates, color = "#F6CF65", opacity = 0.8, weight = 2) %>%
   addCircleMarkers(data = accidents_filtered,
                    weight = 0.5,
@@ -177,41 +116,190 @@ map
 ```
 
 ```{r}
-nearest <- st_nearest_feature(accidents, roads)
-accidents_roads <- bind_cols(accidents %>% st_drop_geometry(), roads[nearest, ])
+accidents_to_roads %>%
+  count(year) %>%
+  mutate(year = as.factor(year)) %>%
+  ggplot(aes(x = year, y = n)) + 
+  geom_bar(stat = "identity")
 ```
 
 ```{r}
-accidents_roads %>% 
+accidents_to_roads %>%
+  drop_na(injury) %>%
+  group_by(year) %>%
+  count(injury) %>%
+  mutate(year = as.factor(year)) %>%
+  ggplot(aes(x = year, y = n, fill = injury)) +
+  geom_bar(stat = "identity", position = "fill")
+```
+
+```{r}
+accidents_to_roads %>%
+  filter(hit_and_run != "?") %>%
+  group_by(year) %>%
+  count(hit_and_run) %>%
+  mutate(year = as.factor(year)) %>%
+  ggplot(aes(x = year, y = n, fill = hit_and_run)) +
+  geom_bar(stat = "identity", position = "fill")
+```
+
+```{r}
+accidents_to_roads %>% 
+  group_by(year) %>% 
+  count(month) %>% 
+  group_by(month) %>%
+  summarize_at(vars(n), list(mean = mean, sd = sd)) %>%
+  mutate(month = as.factor(month)) %>%
+  ggplot(aes(x = month, y = mean)) + 
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2)
+```
+
+```{r}
+accidents_to_roads %>%
+  drop_na(injury) %>%
+  group_by(month) %>%
+  count(injury) %>%
+  mutate(month = as.factor(month)) %>%
+  ggplot(aes(x = month, y = n, fill = injury)) +
+  geom_bar(stat = "identity", position = "fill")
+```
+
+
+```{r}
+accidents_to_roads %>%
+  drop_na(injury) %>%
+  group_by(year, month) %>%
+  count(injury) %>%
+  group_by(month, injury) %>%
+  summarize_at(vars(n), list(mean = mean, sd = sd)) %>%
+  mutate(month = as.factor(month)) %>%
+  ggplot(aes(x = month, y = mean, ymin = mean - sd, ymax = mean + sd, fill = injury)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(position = position_dodge(width = 0.9), width = 0.3)
+```
+
+```{r}
+accidents_to_roads %>%
+  filter(hit_and_run != "?") %>%
+  group_by(month) %>%
+  count(hit_and_run) %>%
+  mutate(month = as.factor(month)) %>%
+  ggplot(aes(x = month, y = n, fill = hit_and_run)) +
+  geom_bar(stat = "identity", position = "fill")
+```
+
+```{r}
+accidents_to_roads %>%
+  filter(hit_and_run != "?") %>%
+  group_by(year, month) %>%
+  count(hit_and_run) %>%
+  group_by(month, hit_and_run) %>%
+  summarize_at(vars(n), list(mean = mean, sd = sd)) %>%
+  mutate(month = as.factor(month)) %>%
+  ggplot(aes(x = month, y = mean, ymin = mean - sd, ymax = mean + sd, fill = hit_and_run)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(position = position_dodge(width = 0.9), width = 0.3)
+```
+
+```{r message=FALSE, warning=FALSE}
+accidents_to_roads %>%
+  group_by(transport_edge_id, full_name, class) %>%
+  summarize(accidents = n()) %>%
+  arrange(desc(accidents))
+```
+
+```{r message=FALSE, warning=FALSE}
+accidents_to_roads %>%
+  group_by(full_name, class) %>%
+  summarize(accidents = n()) %>%
+  arrange(desc(accidents))
+```
+
+```{r}
+accidents_to_roads %>% 
+  group_by(full_name) %>%
+  summarize(injury_accidents = sum(injury), non_injury_accidents = sum(!injury)) %>%
+  mutate(total_accidents = injury_accidents + non_injury_accidents) %>%
+  mutate(injury_accident_pct = injury_accidents / total_accidents) %>%
+  filter(total_accidents >= 500) %>%
+  arrange(desc(injury_accident_pct))
+```
+
+```{r}
+accidents_to_roads %>% 
+  group_by(transport_edge_id, full_name) %>%
+  summarize(injury_accidents = sum(injury), non_injury_accidents = sum(!injury)) %>%
+  mutate(total_accidents = injury_accidents + non_injury_accidents) %>%
+  mutate(injury_accident_pct = injury_accidents / total_accidents) %>%
+  filter(total_accidents >= 10) %>%
+  arrange(desc(injury_accident_pct))
+```
+
+```{r message=FALSE, warning=FALSE}
+accidents_by_road <- accidents_to_roads %>% 
+  group_by(transport_edge_id) %>%
+  summarize(accidents = n()) %>%
+  right_join(roads, by = "transport_edge_id") %>%
+  mutate(accidents = replace_na(accidents, 0)) %>%
+  st_sf(sf_column_name = 'geometry')
+
+roads_class_1 <- accidents_by_road %>% filter(class == 1)
+roads_class_2 <- accidents_by_road %>% filter(class == 2)
+roads_class_3 <- accidents_by_road %>% filter(class == 3)
+roads_class_4 <- accidents_by_road %>% filter(class == 4)
+roads_class_5 <- accidents_by_road %>% filter(class == 5)
+roads_class_6 <- accidents_by_road %>% filter(class == 6)
+roads_class_7 <- accidents_by_road %>% filter(class == 7)
+
+pal <- colorNumeric(palette = "RdYlBu", domain = NULL, reverse = T)
+
+map <- leaflet(options = leafletOptions(minZoom = 11, dragging = TRUE)) %>%
+  addProviderTiles(provider = "CartoDB.Positron") %>%
+  setView(lng = -86.7816, lat = 36.1627, zoom = 11) %>%
+  setMaxBounds(lng1 = -86.7816 + 1, 
+               lat1 = 36.1627 + 1, 
+               lng2 = -86.7816 - 1, 
+               lat2 = 36.1627 - 1) %>%
+  addPolylines(data = roads_class_1, color = ~pal(accidents), opacity = 0.8, weight = 2) %>%
+  addPolylines(data = roads_class_2, color = ~pal(accidents), opacity = 0.8, weight = 2) %>%
+  addPolylines(data = roads_class_3, color = ~pal(accidents), opacity = 0.8, weight = 1) %>%
+  addPolylines(data = roads_class_4, color = ~pal(accidents), opacity = 0.8, weight = 1) %>%
+  addPolylines(data = roads_class_5, color = ~pal(accidents), opacity = 0.8, weight = 1) %>%
+  addPolylines(data = roads_class_6, color = ~pal(accidents), opacity = 0.8, weight = 1) %>%
+  addPolylines(data = roads_class_7, color = ~pal(accidents), opacity = 0.8, weight = 1)
+
+map
+```
+
+```{r}
+accidents_to_roads %>% 
   count(year, sort = F)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(motor_vehicles_n, sort = T)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(injuries_n, sort = T)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(property_damage, sort = T)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(hit_and_run, sort = T)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(collision_type_desc, sort = T)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(weather_desc, sort = T)
 
-accidents_roads %>% 
+accidents_to_roads %>% 
   count(illumination_desc, sort = T)
 ```
 
-
-
-
 ```{r}
-pedestrians <- accidents_roads[grepl("PEDESTRIAN", accidents_roads$harmful_desc), ]
+pedestrians <- accidents_to_roads[grepl("PEDESTRIAN", accidents_to_roads$harmful_desc), ]
 
 pedestrians %>% 
   count(motor_vehicles_n, sort = T)
@@ -236,7 +324,7 @@ pedestrians %>%
 ```
 
 ```{r}
-bicyclists <- accidents_roads[grepl("PEDALCYCLE", accidents_roads$harmful_desc), ]
+bicyclists <- accidents_to_roads[grepl("PEDALCYCLE", accidents_to_roads$harmful_desc), ]
 
 bicyclists %>% 
   count(motor_vehicles_n, sort = T)
@@ -259,4 +347,3 @@ bicyclists %>%
 bicyclists %>% 
   count(illumination_desc, sort = T)
 ```
-
