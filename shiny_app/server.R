@@ -15,16 +15,19 @@ shinyServer(function(input, output) {
   })
   
   # Create scope reactive value
-  rv <- reactiveValues(scope = "low")
+  rv <- reactiveValues(scope = "zoom_12")
+  
+  # Add zoom delay
+  zoom_delay <- debounce(function(){input$mymap_zoom}, 1000)
   
   # Update scope based on zoom level 
-  observeEvent(input$mymap_zoom, {
-    rv$scope <- check_zoom(input$mymap_zoom)
+  observeEvent(zoom_delay(), {
+    rv$scope <- check_zoom(zoom_delay())
   })
   
   # Update map based on scope
-  observeEvent(rv$scope, {
-    update_map("mymap", rv$scope)
+  observeEvent(c(rv$scope, input$map_input), {
+    update_map("mymap", rv$scope, input$map_input)
   })
   
 })

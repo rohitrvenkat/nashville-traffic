@@ -42,7 +42,11 @@ shinyUI(
                    tags$head(
                      includeCSS("www/styles.css")
                    ),
-                   leafletOutput("mymap", width = "100%", height = "100%")
+                   leafletOutput("mymap", width = "100%", height = "100%"),
+                   absolutePanel(top = 10, 
+                                 right = 10,
+                                 selectInput("map_input", "Map Input", map_variables)
+                   )
                )
       ),
       

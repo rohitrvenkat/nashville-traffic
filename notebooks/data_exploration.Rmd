@@ -5,11 +5,144 @@ output: html_notebook
 
 ```{r message=FALSE, warning=FALSE}
 library(leaflet)
-library(leafgl)
 library(sf)
 library(tidyverse)
 library(lubridate)
 library(htmltools)
+```
+
+```{r}
+# roads <- st_read("../data/kx-nashville-tennessee-road-centerlines/nashville-tennessee-road-centerlines.shp", as_tibble = T, quiet = T) %>%
+#   st_transform('+proj=longlat +datum=WGS84')
+# 
+# colnames(roads) <- 
+#   c("transport_edge_id", "st_length", "suffix_dir", "legislation", "is_state_aid", 
+#     "min_width", "from_maint", "created_user", "last_paved", "is_state_route", 
+#     "to_maint", "last_edited_date", "condition_date", "pave_group", "verify", 
+#     "navigable", "max_weight", "abandonment", "row_width", "right_from", "location", 
+#     "one_way", "pave_length", "update_timestamp", "zip_right", "class", "condition", 
+#     "accepted_date", "left_from", "warranty_date", "min_height", "driving_time", 
+#     "suffix_type", "route_name", "former_name", "last_edited_user", "left_to", 
+#     "usd_gsd", "full_name", "official_status", "easement_ret", "name", "facility_id", 
+#     "zip_left", "description", "speed_limit", "legislation_2", "user_id", "install_date", 
+#     "legacy_id", "pm_oci", "prefix_dir", "state_route_no", "description_2", "alt_name", 
+#     "created_date", "seq_id", "us_route_no", "right_to", "geometry")
+# 
+# roads <- roads %>% 
+#   select(transport_edge_id, seq_id, full_name, prefix_dir, name, suffix_type, 
+#          suffix_dir, from_maint, to_maint, speed_limit, driving_time, class, 
+#          min_width, st_length)
+```
+
+```{r message=FALSE, warning=FALSE}
+road_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Road_Segment_data.shp", as_tibble = T, quiet = T, ) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  filter(!st_is_empty(.)) %>%
+  transmute(RD_MSLINK = MSLINK, 
+            ID_NUMBER, 
+            RD_BLM = BLM,
+            RD_ELM = ELM,
+            RTE_NME, 
+            FUNC_CLASS) %>%
+  group_by(ID_NUMBER) %>%
+  mutate(RD_SEGMENTS = n(), .after = ID_NUMBER) %>%
+  ungroup()
+
+roadway_geometrics <- st_read("../data/Davidson_County data shapefiles/Davidson_Roadway_Geometrics_data.shp", as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  transmute(GEO_MSLINK = MSLINK, 
+            ID_NUMBER,
+            GEO_BLM = BLM, 
+            GEO_ELM = ELM,
+            NBR_LANES, 
+            THRU_LANES, 
+            SPD_LMT, 
+            ILLUM, 
+            TY_TERRAIN, 
+            LAND_USE) %>%
+  group_by(ID_NUMBER) %>%
+  mutate(GEO_SEGMENTS = n(), .after = ID_NUMBER) %>%
+  ungroup()
+
+traffic_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Traffic_Segment_data.shp", as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  rowwise() %>%
+  transmute(TR_MSLINK = MSLINK,
+            ID_NUMBER,
+            TR_BLM = BLM,
+            TR_ELM = ELM,
+            AADT,
+            DHV_PCT,
+            PCT_PEAK_H,
+            DRCT_DISTR)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+roads_1 <- roadway_geometrics %>%
+  inner_join(road_segments %>% st_drop_geometry()) %>% 
+  filter(GEO_SEGMENTS >= RD_SEGMENTS) %>%
+  group_by(GEO_MSLINK) %>%
+  slice_min(abs((GEO_BLM + GEO_ELM) / 2 - (RD_BLM + RD_ELM) / 2)) %>%
+  mutate(BLM = GEO_BLM, ELM = GEO_ELM)
+
+roads_2 <- road_segments %>%
+  inner_join(roadway_geometrics %>% st_drop_geometry()) %>%
+  filter(RD_SEGMENTS > GEO_SEGMENTS) %>%
+  group_by(RD_MSLINK) %>%
+  slice_min(abs((RD_BLM + RD_ELM) / 2 - (GEO_BLM + GEO_ELM) / 2)) %>%
+  mutate(BLM = RD_BLM, ELM = RD_ELM)
+
+roads <- bind_rows(roads_1, roads_2) %>%
+  select(ID_NUMBER,
+         BLM,
+         ELM,
+         RTE_NME,
+         FUNC_CLASS,
+         NBR_LANES,
+         THRU_LANES,
+         SPD_LMT,
+         ILLUM,
+         TY_TERRAIN,
+         LAND_USE) %>%
+  arrange(ID_NUMBER, BLM, ELM)
+
+roads_final <- roads %>%
+  st_drop_geometry() %>%
+  inner_join(traffic_segments %>% st_drop_geometry()) %>%
+  group_by(ID_NUMBER, BLM, ELM) %>%
+  slice_min(abs((BLM + ELM) / 2 - (TR_BLM + TR_ELM) / 2)) %>%
+  right_join(roads) %>%
+  select(ID_NUMBER,
+         BLM,
+         ELM,
+         RTE_NME,
+         FUNC_CLASS,
+         NBR_LANES,
+         THRU_LANES,
+         SPD_LMT,
+         ILLUM,
+         TY_TERRAIN,
+         LAND_USE,
+         AADT,
+         DHV_PCT,
+         PCT_PEAK_H,
+         DRCT_DISTR,
+         geometry) %>%
+  st_sf(sf_column_name = 'geometry')
+```
+
+```{r}
+map <- leaflet(options = leafletOptions(minZoom = 10, dragging = TRUE)) %>%
+  addProviderTiles(provider = "CartoDB.PositronNoLabels") %>%
+  setView(lng = -86.7816, lat = 36.1627, zoom = 11) %>%
+  setMaxBounds(lng1 = -86.7816 + 1, 
+               lat1 = 36.1627 + 1, 
+               lng2 = -86.7816 - 1, 
+               lat2 = 36.1627 - 1) %>%
+  addPolylines(data = roads_final, color = "grey", opacity = 0.8, weight = 1)
+
+map
 ```
 
 ```{r}
@@ -34,44 +167,42 @@ colnames(accidents) <-
     "state", "zip", "rpa", "precinct", "lat", "long", "geometry")
 
 accidents <- accidents %>%
-  mutate(year = year(date), month = month(date), day = day(date), .after = date) %>%
+  mutate(year = year(date), 
+         month = month(date), 
+         day = day(date), 
+         .after = date) %>%
   filter(year < 2022) %>%
-  mutate(injury = injuries_n > 0, .after = injuries_n) %>%
+  mutate(injury = injuries_n > 0, 
+         multi_injury = injuries_n > 1, 
+         .after = injuries_n) %>%
   mutate(hit_and_run = as.logical(hit_and_run))
 ```
 
 ```{r}
-roads <- st_read("../data/kx-nashville-tennessee-road-centerlines/nashville-tennessee-road-centerlines.shp", as_tibble = T, quiet = T) %>%
-  st_transform('+proj=longlat +datum=WGS84')
-
-colnames(roads) <- 
-  c("transport_edge_id", "st_length", "suffix_dir", "legislation", "is_state_aid", 
-    "min_width", "from_maint", "created_user", "last_paved", "is_state_route", 
-    "to_maint", "last_edited_date", "condition_date", "pave_group", "verify", 
-    "navigable", "max_weight", "abandonment", "row_width", "right_from", "location", 
-    "one_way", "pave_length", "update_timestamp", "zip_right", "class", "condition", 
-    "accepted_date", "left_from", "warranty_date", "min_height", "driving_time", 
-    "suffix_type", "route_name", "former_name", "last_edited_user", "left_to", 
-    "usd_gsd", "full_name", "official_status", "easement_ret", "name", "facility_id", 
-    "zip_left", "description", "speed_limit", "legislation_2", "user_id", "install_date", 
-    "legacy_id", "pm_oci", "prefix_dir", "state_route_no", "description_2", "alt_name", 
-    "created_date", "seq_id", "us_route_no", "right_to", "geometry")
-
-roads <- roads %>% 
-  select(transport_edge_id, seq_id, full_name, prefix_dir, name, suffix_type, 
-         suffix_dir, from_maint, to_maint, speed_limit, driving_time, class, 
-         min_width, st_length)
+nearest <- st_nearest_feature(accidents, roads_final)
+accidents_to_roads <- bind_cols(accidents %>% st_drop_geometry(), roads_final[nearest, ])
 ```
 
 ```{r}
-nearest <- st_nearest_feature(accidents, roads)
-accidents_to_roads <- bind_cols(accidents %>% st_drop_geometry(), roads[nearest, ])
+accidents_by_road <- accidents_to_roads %>% 
+  group_by(ID_NUMBER, BLM, ELM) %>%
+  summarize(accidents = n(), 
+            injury = sum(injury), 
+            multi_injury = sum(multi_injury),
+            hit_and_run = sum(hit_and_run)) %>%
+  mutate(injury_pct = ifelse(accidents >= 15, injury / accidents, NA)) %>%
+  mutate(multi_injury_pct = ifelse(accidents >= 15, multi_injury / accidents, NA)) %>%
+  mutate(hit_and_run_pct = ifelse(accidents >= 15, hit_and_run / accidents, NA)) %>%
+  right_join(roads_final) %>%
+  mutate(across(c(accidents, injury, multi_injury, hit_and_run), ~replace_na(.x, 0))) %>%
+  st_sf(sf_column_name = 'geometry')
 ```
 
 ```{r}
 saveRDS(accidents, "../shiny_app/data/accidents.rds")
 saveRDS(roads, "../shiny_app/data/roads.rds")
 saveRDS(accidents_to_roads, "../shiny_app/data/accidents_to_roads.rds")
+saveRDS(accidents_by_road, "../shiny_app/data/accidents_by_road.rds")
 ```
 
 ```{r}
@@ -88,21 +219,42 @@ accidents_filtered$label <-
          "<b>Number of Injuries:</b> ", accidents_filtered$injuries_n) %>%
   lapply(htmltools::HTML)
 
-interstates <- roads %>% filter(class %in% c(1,2))
-highways <- roads %>% filter(class %in% c(3,4))
-main_roads <- roads %>% filter(class %in% c(5))
-small_roads <- roads %>% filter(class %in% c(6,7))
+interstates <- accidents_by_road %>% 
+  filter(FUNC_CLASS %in% c("R / INTERSTATE", 
+                           "U / INTERSTATE", 
+                           "U / FWY OR EXP"))
 
-map <- leaflet(options = leafletOptions(minZoom = 10, dragging = TRUE)) %>%
+arterial_roads <- accidents_by_road %>% 
+  filter(FUNC_CLASS %in% c("R / MIN ART", 
+                           "U / MIN ART", 
+                           "R / OTH PRIN ART", 
+                           "U / MIN ART", 
+                           "U OTH PRIN  ART"))
+
+collector_roads <- accidents_by_road %>% 
+  filter(FUNC_CLASS %in% c("R / MAJ COL", 
+                           "R / MIN COL", 
+                           "U / MAJ COL"))
+
+local_roads <- accidents_by_road %>% 
+  filter(FUNC_CLASS %in% c("R / LOCAL", 
+                           "U / LOCAL"))
+
+# interstates <- roads %>% filter(class %in% c(1,2))
+# highways <- roads %>% filter(class %in% c(3,4))
+# main_roads <- roads %>% filter(class %in% c(5))
+# small_roads <- roads %>% filter(class %in% c(6,7))
+
+map <- leaflet(options = leafletOptions(minZoom = 12, dragging = TRUE)) %>%
   addProviderTiles(provider = "CartoDB.PositronNoLabels") %>%
-  setView(lng = -86.7816, lat = 36.1627, zoom = 11) %>%
+  setView(lng = -86.7816, lat = 36.1627, zoom = 12) %>%
   setMaxBounds(lng1 = -86.7816 + 1, 
                lat1 = 36.1627 + 1, 
                lng2 = -86.7816 - 1, 
                lat2 = 36.1627 - 1) %>%
-  addPolylines(data = small_roads, color = "lightgrey", opacity = 0.75, weight = 0.5) %>%
-  addPolylines(data = main_roads, color = "lightgrey", opacity = 1, weight = 0.5) %>%
-  addPolylines(data = highways, color = "grey", opacity = 0.5, weight = 1) %>%
+  addPolylines(data = local_roads, color = "lightgrey", opacity = 0.75, weight = 0.5) %>%
+  addPolylines(data = collector_roads, color = "lightgrey", opacity = 1, weight = 0.5) %>%
+  addPolylines(data = arterial_roads, color = "grey", opacity = 0.5, weight = 1) %>%
   addPolylines(data = interstates, color = "#F6CF65", opacity = 0.8, weight = 2) %>%
   addCircleMarkers(data = accidents_filtered,
                    weight = 0.5,
