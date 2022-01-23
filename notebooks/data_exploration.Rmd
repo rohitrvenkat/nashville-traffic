@@ -12,51 +12,128 @@ library(sf)
 library(leaflet)
 library(gt)
 library(webshot)
-```
-
-```{r}
-# roads <- st_read("../data/kx-nashville-tennessee-road-centerlines/nashville-tennessee-road-centerlines.shp", 
-#                  as_tibble = T, quiet = T) %>%
-#   st_transform('+proj=longlat +datum=WGS84')
-# 
-# colnames(roads) <-
-#   c("transport_edge_id", "st_length", "suffix_dir", "legislation", "is_state_aid",
-#     "min_width", "from_maint", "created_user", "last_paved", "is_state_route",
-#     "to_maint", "last_edited_date", "condition_date", "pave_group", "verify",
-#     "navigable", "max_weight", "abandonment", "row_width", "right_from", "location",
-#     "one_way", "pave_length", "update_timestamp", "zip_right", "class", "condition",
-#     "accepted_date", "left_from", "warranty_date", "min_height", "driving_time",
-#     "suffix_type", "route_name", "former_name", "last_edited_user", "left_to",
-#     "usd_gsd", "full_name", "official_status", "easement_ret", "name", "facility_id",
-#     "zip_left", "description", "speed_limit", "legislation_2", "user_id", "install_date",
-#     "legacy_id", "pm_oci", "prefix_dir", "state_route_no", "description_2", "alt_name",
-#     "created_date", "seq_id", "us_route_no", "right_to", "geometry")
-# 
-# roads <- roads %>%
-#   select(transport_edge_id, seq_id, full_name, prefix_dir, name, suffix_type,
-#          suffix_dir, from_maint, to_maint, speed_limit, driving_time, class,
-#          min_width, st_length)
-# 
-# interstates <- roads %>% filter(class %in% c(1,2))
-# highways <- roads %>% filter(class %in% c(3,4))
-# main_roads <- roads %>% filter(class %in% c(5))
-# small_roads <- roads %>% filter(class %in% c(6,7))
+library(jsonlite)
+library(httr)
+library(janitor)
 ```
 
 ```{r message=FALSE, warning=FALSE}
+# road_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Road_Segment_data.shp", 
+#                          as_tibble = T, quiet = T, ) %>%
+#   st_transform('+proj=longlat +datum=WGS84') %>%
+#   filter(!st_is_empty(.)) %>%
+#   transmute(RD_MSLINK = MSLINK, 
+#             ID_NUMBER, 
+#             RD_BLM = BLM,
+#             RD_ELM = ELM,
+#             RTE_NME, 
+#             FUNC_CLASS) %>%
+#   group_by(ID_NUMBER) %>%
+#   mutate(RD_SEGMENTS = n(), .after = ID_NUMBER) %>%
+#   ungroup()
+# 
+# roadway_geometrics <- st_read("../data/Davidson_County data shapefiles/Davidson_Roadway_Geometrics_data.shp",
+#                               as_tibble = T, quiet = T) %>%
+#   st_transform('+proj=longlat +datum=WGS84') %>%
+#   transmute(GEO_MSLINK = MSLINK, 
+#             ID_NUMBER,
+#             GEO_BLM = BLM, 
+#             GEO_ELM = ELM,
+#             NBR_LANES, 
+#             THRU_LANES, 
+#             SPD_LMT, 
+#             ILLUM, 
+#             TY_TERRAIN, 
+#             LAND_USE) %>%
+#   group_by(ID_NUMBER) %>%
+#   mutate(GEO_SEGMENTS = n(), .after = ID_NUMBER) %>%
+#   ungroup()
+# 
+# traffic_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Traffic_Segment_data.shp", as_tibble = T, quiet = T) %>%
+#   st_transform('+proj=longlat +datum=WGS84') %>%
+#   transmute(TR_MSLINK = MSLINK,
+#             ID_NUMBER,
+#             TR_BLM = BLM,
+#             TR_ELM = ELM,
+#             AADT,
+#             DHV_PCT,
+#             PCT_PEAK_H,
+#             DRCT_DISTR)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+# roads_1 <- roadway_geometrics %>%
+#   inner_join(road_segments %>% st_drop_geometry()) %>% 
+#   filter(GEO_SEGMENTS >= RD_SEGMENTS) %>%
+#   group_by(GEO_MSLINK) %>%
+#   slice_min(abs((GEO_BLM + GEO_ELM) / 2 - (RD_BLM + RD_ELM) / 2)) %>%
+#   ungroup() %>%
+#   mutate(BLM = GEO_BLM, ELM = GEO_ELM)
+# 
+# roads_2 <- road_segments %>%
+#   inner_join(roadway_geometrics %>% st_drop_geometry()) %>%
+#   filter(RD_SEGMENTS > GEO_SEGMENTS) %>%
+#   group_by(RD_MSLINK) %>%
+#   slice_min(abs((RD_BLM + RD_ELM) / 2 - (GEO_BLM + GEO_ELM) / 2)) %>%
+#   ungroup() %>%
+#   mutate(BLM = RD_BLM, ELM = RD_ELM)
+
+
+# roads <- bind_rows(roads_1, roads_2) %>%
+#   transmute(ID_NUMBER,
+#             BLM,
+#             ELM,
+#             LENGTH = ELM - BLM,
+#             RTE_NME,
+#             FUNC_CLASS,
+#             NBR_LANES,
+#             THRU_LANES,
+#             SPD_LMT,
+#             ILLUM,
+#             TY_TERRAIN,
+#             LAND_USE) %>%
+#   arrange(ID_NUMBER, BLM, ELM)
+# 
+# roads_final <- roads %>%
+#   st_drop_geometry() %>%
+#   inner_join(traffic_segments %>% st_drop_geometry()) %>%
+#   group_by(ID_NUMBER, BLM, ELM) %>%
+#   slice_min(abs((BLM + ELM) / 2 - (TR_BLM + TR_ELM) / 2)) %>%
+#   ungroup() %>%
+#   right_join(roads) %>%
+#   select(ID_NUMBER,
+#          BLM,
+#          ELM,
+#          LENGTH,
+#          RTE_NME,
+#          FUNC_CLASS,
+#          NBR_LANES,
+#          THRU_LANES,
+#          SPD_LMT,
+#          ILLUM,
+#          TY_TERRAIN,
+#          LAND_USE,
+#          AADT,
+#          DHV_PCT,
+#          PCT_PEAK_H,
+#          DRCT_DISTR,
+#          geometry) %>%
+#   st_sf(sf_column_name = 'geometry')
+```
+
+```{r}
 road_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Road_Segment_data.shp", 
                          as_tibble = T, quiet = T, ) %>%
   st_transform('+proj=longlat +datum=WGS84') %>%
   filter(!st_is_empty(.)) %>%
-  transmute(RD_MSLINK = MSLINK, 
+  transmute(MSLINK,
             ID_NUMBER, 
-            RD_BLM = BLM,
-            RD_ELM = ELM,
+            BLM,
+            ELM,
+            LENGTH = ELM - BLM,
             RTE_NME, 
-            FUNC_CLASS) %>%
-  group_by(ID_NUMBER) %>%
-  mutate(RD_SEGMENTS = n(), .after = ID_NUMBER) %>%
-  ungroup()
+            FUNC_CLASS)
 
 roadway_geometrics <- st_read("../data/Davidson_County data shapefiles/Davidson_Roadway_Geometrics_data.shp",
                               as_tibble = T, quiet = T) %>%
@@ -70,12 +147,10 @@ roadway_geometrics <- st_read("../data/Davidson_County data shapefiles/Davidson_
             SPD_LMT, 
             ILLUM, 
             TY_TERRAIN, 
-            LAND_USE) %>%
-  group_by(ID_NUMBER) %>%
-  mutate(GEO_SEGMENTS = n(), .after = ID_NUMBER) %>%
-  ungroup()
+            LAND_USE)
 
-traffic_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Traffic_Segment_data.shp", as_tibble = T, quiet = T) %>%
+traffic_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Traffic_Segment_data.shp", 
+                            as_tibble = T, quiet = T) %>%
   st_transform('+proj=longlat +datum=WGS84') %>%
   transmute(TR_MSLINK = MSLINK,
             ID_NUMBER,
@@ -85,66 +160,27 @@ traffic_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Tr
             DHV_PCT,
             PCT_PEAK_H,
             DRCT_DISTR)
-```
 
-
-```{r message=FALSE, warning=FALSE}
-roads_1 <- roadway_geometrics %>%
-  inner_join(road_segments %>% st_drop_geometry()) %>% 
-  filter(GEO_SEGMENTS >= RD_SEGMENTS) %>%
-  group_by(GEO_MSLINK) %>%
-  slice_min(abs((GEO_BLM + GEO_ELM) / 2 - (RD_BLM + RD_ELM) / 2)) %>%
-  ungroup() %>%
-  mutate(BLM = GEO_BLM, ELM = GEO_ELM)
-
-roads_2 <- road_segments %>%
+roads <- road_segments %>%
   inner_join(roadway_geometrics %>% st_drop_geometry()) %>%
-  filter(RD_SEGMENTS > GEO_SEGMENTS) %>%
-  group_by(RD_MSLINK) %>%
-  slice_min(abs((RD_BLM + RD_ELM) / 2 - (GEO_BLM + GEO_ELM) / 2)) %>%
+  group_by(MSLINK) %>%
+  slice_min(abs((BLM + ELM) / 2 - (GEO_BLM + GEO_ELM) / 2), with_ties = F) %>%
   ungroup() %>%
-  mutate(BLM = RD_BLM, ELM = RD_ELM)
-
-roads <- bind_rows(roads_1, roads_2) %>%
-  transmute(ID_NUMBER,
-            BLM,
-            ELM,
-            LENGTH = ELM - BLM,
-            RTE_NME,
-            FUNC_CLASS,
-            NBR_LANES,
-            THRU_LANES,
-            SPD_LMT,
-            ILLUM,
-            TY_TERRAIN,
-            LAND_USE) %>%
-  arrange(ID_NUMBER, BLM, ELM)
-
-roads_final <- roads %>%
-  st_drop_geometry() %>%
-  inner_join(traffic_segments %>% st_drop_geometry()) %>%
-  group_by(ID_NUMBER, BLM, ELM) %>%
-  slice_min(abs((BLM + ELM) / 2 - (TR_BLM + TR_ELM) / 2)) %>%
+  left_join(traffic_segments %>% st_drop_geometry()) %>%
+  group_by(MSLINK) %>%
+  slice_min(abs((BLM + ELM) / 2 - (TR_BLM + TR_ELM) / 2), with_ties = F) %>%
   ungroup() %>%
-  right_join(roads) %>%
-  select(ID_NUMBER,
+  select(RTE_NME,
          BLM,
          ELM,
          LENGTH,
-         RTE_NME,
          FUNC_CLASS,
-         NBR_LANES,
-         THRU_LANES,
-         SPD_LMT,
-         ILLUM,
-         TY_TERRAIN,
-         LAND_USE,
          AADT,
          DHV_PCT,
          PCT_PEAK_H,
          DRCT_DISTR,
-         geometry) %>%
-  st_sf(sf_column_name = 'geometry')
+         ID_NUMBER,
+         geometry)
 ```
 
 ```{r}
@@ -153,14 +189,14 @@ accidents_1 <- st_read("../data/traffic_accidents_2021_11_23/geo_export_843312ea
   st_transform('+proj=longlat +datum=WGS84') %>%
   filter(!st_is_empty(.)) %>%
   filter(!geometry %in% st_sfc(st_point(c(0, 0)))) %>%
-  filter(year(date_date_) == 2014)
+  filter(lubridate::year(date_date_) == 2014)
 
 accidents_2 <- st_read("../data/traffic_accidents_2022_01_11/geo_export_80ccc574-077c-4ad8-b6d5-668c371ae1f9.shp",
                        as_tibble = T, quiet = T) %>%
   st_transform('+proj=longlat +datum=WGS84') %>%
   filter(!st_is_empty(.)) %>%
   filter(!geometry %in% st_sfc(st_point(c(0, 0)))) %>%
-  filter(year(date_date_) < 2022)
+  filter(lubridate::year(date_date_) < 2022)
 
 accidents <- bind_rows(accidents_1, accidents_2)
 
@@ -172,9 +208,9 @@ colnames(accidents) <-
     "state", "zip", "rpa", "precinct", "lat", "long", "geometry")
 
 accidents <- accidents %>%
-  mutate(year = year(date),
-         month = month(date),
-         day = day(date),
+  mutate(year = lubridate::year(date),
+         month = lubridate::month(date),
+         day = lubridate::day(date),
          .after = date) %>%
   mutate(injury = injuries_n > 0, .after = injuries_n) %>%
   mutate(hit_and_run = as.logical(hit_and_run)) %>%
@@ -232,6 +268,14 @@ accidents_by_road$label <-
   lapply(HTML)
 ```
 
+
+```{r}
+saveRDS(accidents, "../shiny_app/data/accidents.rds")
+saveRDS(roads_final, "../shiny_app/data/roads.rds")
+saveRDS(accidents_to_roads, "../shiny_app/data/accidents_to_roads.rds")
+saveRDS(accidents_by_road, "../shiny_app/data/accidents_by_road.rds")
+```
+
 ```{r}
 api_key <- read_json("../data/census.json")
 davidson_county_pop_data <- tibble()
@@ -259,6 +303,8 @@ for(year in seq(2014, 2019)) {
 
   davidson_county_pop_data <- bind_rows(davidson_county_pop_data, census_data)
 }
+
+saveRDS(davidson_county_pop_data, "../shiny_app/data/davidson_county_pop_data.rds")
 ```
 
 ```{r}
@@ -288,39 +334,31 @@ for(year in seq(2014, 2019)) {
 
   zip_code_pop_data <- bind_rows(zip_code_pop_data, census_data)
 }
+
+saveRDS(zip_code_pop_data, "../shiny_app/data/zip_code_pop_data.rds")
 ```
 
 ```{r}
 zip_codes <- names(table(accidents_to_roads$zip))
+
 p <- zip_code_pop_data %>%
   filter(zipcode %in% zip_codes) %>%
   ggplot(aes(x = year, y = population, color = zipcode, label = zipcode)) +
-  geom_line(size = 1.5) +
+  geom_line(size = 1) +
   theme_bw()
 
 ggplotly(p, tooltip = "label")
 ```
 
 ```{r}
-test1 <- zip_code_pop_data %>%
+davidson_county_pct_change <- davidson_county_pop_data %>%
+  pivot_wider(id_cols = county, names_from = year, values_from = population) %>%
+  mutate(pct_change = `2019`/`2014`)
+
+zip_code_pct_change <- zip_code_pop_data %>%
   filter(zipcode %in% zip_codes) %>%
   pivot_wider(id_cols = zipcode, names_from = year, values_from = population) %>%
   mutate(pct_change = `2019`/`2014`)
-
-test2 <- davidson_county_pop_data %>%
-  pivot_wider(id_cols = county, names_from = year, values_from = population) %>%
-  mutate(pct_change = `2019`/`2014`)
-```
-
-
-```{r}
-saveRDS(accidents, "../shiny_app/data/accidents.rds")
-saveRDS(roads_final, "../shiny_app/data/roads.rds")
-saveRDS(accidents_to_roads, "../shiny_app/data/accidents_to_roads.rds")
-saveRDS(accidents_by_road, "../shiny_app/data/accidents_by_road.rds")
-saveRDS(davidson_county_pop_data, "~/NSS/projects/nashville-traffic/shiny_app/data/davidson_county_pop_data.rds")
-saveRDS(zip_code_pop_data, "~/NSS/projects/nashville-traffic/shiny_app/data/zip_code_pop_data.rds")
-
 ```
 
 ```{r}
@@ -618,7 +656,6 @@ accidents_to_roads %>%
   geom_bar(stat = "identity", position = "fill")
 ```
 
-
 ```{r}
 accidents_to_roads %>%
   drop_na(injury) %>%
@@ -657,123 +694,11 @@ accidents_to_roads %>%
 
 ```{r}
 accidents_to_roads %>%
-  drop_na(pedestrian) %>%
   group_by(year) %>%
   summarize(total_accidents = n(), 
-            pedestrian_accidents = sum(pedestrian), 
+            pedestrian_accidents = sum(pedestrian, na.rm = T), 
             pedestrian_accident_rate = pedestrian_accidents / total_accidents) %>%
   mutate(year = as.factor(year)) %>%
   ggplot(aes(x = year, y = pedestrian_accident_rate)) +
   geom_bar(stat = "identity")
-```
-
-
-```{r message=FALSE, warning=FALSE}
-accidents_to_roads %>%
-  group_by(transport_edge_id, full_name, class) %>%
-  summarize(accidents = n()) %>%
-  arrange(desc(accidents))
-```
-
-```{r message=FALSE, warning=FALSE}
-accidents_to_roads %>%
-  group_by(full_name, class) %>%
-  summarize(accidents = n()) %>%
-  arrange(desc(accidents))
-```
-
-```{r}
-accidents_to_roads %>% 
-  group_by(full_name) %>%
-  summarize(injury_accidents = sum(injury), non_injury_accidents = sum(!injury)) %>%
-  mutate(total_accidents = injury_accidents + non_injury_accidents) %>%
-  mutate(injury_accident_rate = injury_accidents / total_accidents) %>%
-  filter(total_accidents >= 500) %>%
-  arrange(desc(injury_accident_rate))
-```
-
-```{r}
-accidents_to_roads %>% 
-  group_by(transport_edge_id, full_name) %>%
-  summarize(injury_accidents = sum(injury), non_injury_accidents = sum(!injury)) %>%
-  mutate(total_accidents = injury_accidents + non_injury_accidents) %>%
-  mutate(injury_accident_rate = injury_accidents / total_accidents) %>%
-  filter(total_accidents >= 10) %>%
-  arrange(desc(injury_accident_rate))
-```
-
-```{r}
-accidents_to_roads %>% 
-  count(year, sort = F)
-
-accidents_to_roads %>% 
-  count(motor_vehicles_n, sort = T)
-
-accidents_to_roads %>% 
-  count(injuries_n, sort = T)
-
-accidents_to_roads %>% 
-  count(property_damage, sort = T)
-
-accidents_to_roads %>% 
-  count(hit_and_run, sort = T)
-
-accidents_to_roads %>% 
-  count(collision_type_desc, sort = T)
-
-accidents_to_roads %>% 
-  count(weather_desc, sort = T)
-
-accidents_to_roads %>% 
-  count(illumination_desc, sort = T)
-```
-
-```{r}
-pedestrians <- accidents_to_roads[grepl("PEDESTRIAN", accidents_to_roads$harmful_desc), ]
-
-pedestrians %>% 
-  count(motor_vehicles_n, sort = T)
-
-pedestrians %>% 
-  count(injuries_n, sort = T)
-
-pedestrians %>% 
-  count(property_damage, sort = T)
-
-pedestrians %>% 
-  count(hit_and_run, sort = T)
-
-pedestrians %>% 
-  count(collision_type_desc, sort = T)
-
-pedestrians %>% 
-  count(weather_desc, sort = T)
-
-pedestrians %>% 
-  count(illumination_desc, sort = T)
-```
-
-```{r}
-bicyclists <- accidents_to_roads[grepl("PEDALCYCLE", accidents_to_roads$harmful_desc), ]
-
-bicyclists %>% 
-  count(motor_vehicles_n, sort = T)
-
-bicyclists %>% 
-  count(injuries_n, sort = T)
-
-bicyclists %>% 
-  count(property_damage, sort = T)
-
-bicyclists %>% 
-  count(hit_and_run, sort = T)
-
-bicyclists %>% 
-  count(collision_type_desc, sort = T)
-
-bicyclists %>% 
-  count(weather_desc, sort = T)
-
-bicyclists %>% 
-  count(illumination_desc, sort = T)
 ```

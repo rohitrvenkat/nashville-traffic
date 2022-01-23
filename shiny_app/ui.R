@@ -1,11 +1,8 @@
 library(tidyverse)
 library(shiny)
-library(fresh)
-library(shinyjs)
 library(leaflet)
 library(leaflet.extras)
 library(sf)
-library(shinycssloaders)
 library(scales)
 library(htmltools)
 library(shinyBS)
@@ -34,9 +31,46 @@ shinyUI(
           width = 300, 
           height = 360,
           h4(HTML("<b>Evaluating Traffic Accident Risk<br>for Nashville Roadways</b>")),
-          selectInput(inputId = "map_input", label = "Map Input", choices =  input_vars),
-          plotlyOutput(outputId = "sidebar_plot", height = 200)
+          selectInput(
+            inputId = "map_input", 
+            label = "Map Input", 
+            choices =  c("Annual Average Daily Traffic (AADT)",
+                         "Accident Rate (per MVMT)",
+                         "Total Accidents",
+                         "Injury Accidents", 
+                         "Injury Percentage",
+                         "Hit-and-Runs",
+                         "Hit-and-Run Percentage",
+                         "Pedestrian Collisions")
+          ),
+          conditionalPanel(
+            condition = "input.map_input == 'Accident Rate (per MVMT)'",       
+            helpText(
+              withMathJax("Accident Rate per 1 Million Vehicles Miles Traveled:", br(),
+                          "$${R}=\\frac{1{,}000{,}000\\times{C}}{{365}\\times{N}\\times{V}\\times{L}}$$",
+                          "C = Total Number of Crashes", br(),
+                          "N = Number of Years of Data", br(),
+                          "V = Traffic Volume Based on AADT", br(),
+                          "L = Length of Roadway Segment"),
+              style = "padding-left: 10px"
+            )
+          ),
+          conditionalPanel(
+            condition = "!['Annual Average Daily Traffic (AADT)', 'Accident Rate (per MVMT)'].includes(input.map_input)",
+            plotlyOutput(outputId = "sidebar_plot", height = 200)
+          )
         )
+      ),
+      tags$head(tags$style(HTML( '.has-feedback .form-control { padding-right: 0px }' ))),
+      bsModal(
+        id = "tableModal", 
+        title = HTML("<b>Accidents by Roadway Segment</b>"), 
+        trigger = "tableButton", 
+        size = "large",
+        div(
+          DTOutput('data_table'), 
+          style = "font-size: 100%",
+          align = "center")
       ),
       bsModal(
         id = "aboutModal", 
@@ -48,7 +82,7 @@ shinyUI(
           column(
             width = 6, 
             style = "padding-left: 0",
-            h4("Data Sources", style = "margin-top: 15px;"),
+            h4("Data Sources", style = "margin-top: 15px"),
             tags$span("Metro Nashville Police Department traffic accident data was obtained from the ",
                       tags$a("Nashville Open Data Portal", 
                              href = "https://data.nashville.gov/Police/Traffic-Accidents/6v6w-hpcw", 
@@ -61,14 +95,14 @@ shinyUI(
                              .noWS = "after"),
                       ".", style = "font-size: 14px;"),
             br(),
-            h4("Application Author", style = "margin-top: 25px;"),
+            h4("Application Author", style = "margin-top: 25px"),
             tags$span("Hello, my name is ",
                       tags$a("Rohit Venkat", 
                              href = "https://www.linkedin.com/in/rohit-venkat/", 
                              target = "_blank", 
                              .noWS = "after"),
                       "! I am a data scientist-in-training at Nashville Software School.", 
-                      style = "font-size: 14px;")
+                      style = "font-size: 14px")
           ),
           column(
             width = 6, 
@@ -79,32 +113,6 @@ shinyUI(
           )
         )
       )
-      # bsModal(
-      #   id = "statsModal", 
-      #   title = htmlOutput("title"),
-      #   trigger = "statsButton", 
-      #   size = "large",
-      #         
-      #   glide(
-      #     id = "myglide",
-      #     screen(
-      #       br(),
-      #       p("This is a very simple shinyglide application."),
-      #       p("Please click on Next to go to the next screen.")
-      #     ),
-      #     screen(
-      #       br(),
-      #       p("Please choose a value."),
-      #       numericInput("n", "n", value = 10, min = 10)
-      #     ),
-      #     screen(
-      #       plotOutput("total_accidents_by_year", height = "500px")
-      #     )
-      #     # screen(
-      #     #   # plotOutput("injury_rate_by_year", height = "500px")
-      #     # )
-      #   )
-      # )
     )
   )
 )
