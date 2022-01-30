@@ -1,0 +1,36 @@
+div.outer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+body, label, input, button, select { 
+  font-family: 'Lato';
+  font-weight: 200;
+}
+
+#side_panel {
+  background-color: white;
+  padding: 0px 10px 0px;
+  cursor: move;
+}
+
+#table_modal .modal-dialog {
+  width: 1200px;
+}
+
+#table_modal .modal-footer{
+  display:none;
+}
+
+#data_table .table {
+  white-space: nowrap;
+}
+
+.has-feedback .form-control {
+  padding-right: 0px;
+}

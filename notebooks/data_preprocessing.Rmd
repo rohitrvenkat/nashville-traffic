@@ -1,0 +1,310 @@
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(scales)
+library(sf)
+library(shiny)
+library(wesanderson)
+```
+
+```{r}
+# Read in road segment data
+road_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Road_Segment_data.shp", 
+                         as_tibble = T, quiet = T, ) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  filter(!st_is_empty(.)) %>%
+  transmute(MSLINK,
+            ID_NUMBER, 
+            BLM,
+            ELM,
+            LENGTH = ELM - BLM,
+            RTE_NME, 
+            FUNC_CLASS)
+
+# Read in roadway geometrics data
+roadway_geometrics <- st_read("../data/Davidson_County data shapefiles/Davidson_Roadway_Geometrics_data.shp",
+                              as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  transmute(GEO_MSLINK = MSLINK,
+            ID_NUMBER,
+            GEO_BLM = BLM,
+            GEO_ELM = ELM,
+            NBR_LANES,
+            THRU_LANES,
+            SPD_LMT,
+            ILLUM,
+            TY_TERRAIN,
+            LAND_USE)
+
+# Read in traffic segment data
+traffic_segments <- st_read("../data/Davidson_County data shapefiles/Davidson_Traffic_Segment_data.shp", 
+                            as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  transmute(TR_MSLINK = MSLINK,
+            ID_NUMBER,
+            TR_BLM = BLM,
+            TR_ELM = ELM,
+            AADT,
+            DHV_PCT,
+            PCT_PEAK_H,
+            DRCT_DISTR)
+
+# Merge datasets
+roads <- road_segments %>%
+  inner_join(roadway_geometrics %>% st_drop_geometry(), by = "ID_NUMBER") %>%
+  group_by(MSLINK) %>%
+  slice_min(abs((BLM + ELM) / 2 - (GEO_BLM + GEO_ELM) / 2), with_ties = F) %>%
+  ungroup() %>%
+  left_join(traffic_segments %>% st_drop_geometry(), by = "ID_NUMBER") %>%
+  group_by(MSLINK) %>%
+  slice_min(abs((BLM + ELM) / 2 - (TR_BLM + TR_ELM) / 2), with_ties = F) %>%
+  ungroup() %>%
+  select(RTE_NME,
+         ID_NUMBER,
+         BLM,
+         ELM,
+         LENGTH,
+         FUNC_CLASS,
+         AADT,
+         NBR_LANES,
+         THRU_LANES,
+         SPD_LMT,
+         ILLUM,
+         TY_TERRAIN,
+         LAND_USE,
+         DHV_PCT,
+         PCT_PEAK_H,
+         DRCT_DISTR)
+```
+
+```{r}
+# Read in traffic accident data from 2014
+accidents_1 <- st_read("../data/traffic_accidents_2021_11_23/geo_export_843312ea-42b0-4c02-a5a6-277108a3e379.shp",
+                       as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  filter(!st_is_empty(.)) %>%
+  filter(!geometry %in% st_sfc(st_point(c(0, 0)))) %>%
+  filter(lubridate::year(date_date_) == 2014)
+
+# Read in traffic accident data from 2015 to 2021
+accidents_2 <- st_read("../data/traffic_accidents_2022_01_11/geo_export_80ccc574-077c-4ad8-b6d5-668c371ae1f9.shp",
+                       as_tibble = T, quiet = T) %>%
+  st_transform('+proj=longlat +datum=WGS84') %>%
+  filter(!st_is_empty(.)) %>%
+  filter(!geometry %in% st_sfc(st_point(c(0, 0)))) %>%
+  filter(lubridate::year(date_date_) < 2022)
+
+# Combine traffic accident data from 2014 to 2021
+accidents <- bind_rows(accidents_1, accidents_2)
+
+# Rename columns
+colnames(accidents) <-
+  c("accident_n", "date", "time", "motor_vehicles_n", "injuries_n", "fatalities_n",
+    "property_damage", "hit_and_run", "reporting_officer", "collision_type_code",
+    "collision_type_desc", "weather_code", "weather_desc", "illumination_code",
+    "illumination_desc", "harmful_code", "harmful_desc", "street_address", "city",
+    "state", "zip", "rpa", "precinct", "lat", "long", "geometry")
+
+# Add new columns
+accidents <- accidents %>%
+  mutate(year = lubridate::year(date),
+         month = lubridate::month(date),
+         day = lubridate::day(date),
+         .after = date) %>%
+  mutate(injury = injuries_n > 0, .after = injuries_n) %>%
+  mutate(hit_and_run = as.logical(hit_and_run)) %>%
+  mutate(pedestrian = str_detect(harmful_desc, "PEDESTRIAN"), .after = hit_and_run)
+```
+
+```{r}
+# Bind traffic accidents to nearest road
+accidents_to_roads <- bind_cols(accidents %>% st_drop_geometry(), 
+                                roads[st_nearest_feature(accidents, roads), ])
+
+# Add summary columns
+accidents_by_road <- accidents_to_roads %>% 
+  group_by(RTE_NME, ID_NUMBER, BLM, ELM, LENGTH) %>%
+  summarize(accidents = n(), 
+            injury = sum(injury, na.rm = T),
+            hit_and_run = sum(hit_and_run, na.rm = T),
+            pedestrian = sum(pedestrian, na.rm = T),
+            .groups = "drop") %>%
+  mutate(injury_pct = injury / accidents, .after = injury) %>%
+  mutate(hit_and_run_pct = hit_and_run / accidents, .after = hit_and_run) %>%
+  right_join(roads, by = c("RTE_NME", "ID_NUMBER", "BLM", "ELM", "LENGTH")) %>%
+  mutate(across(c(accidents, injury, hit_and_run, pedestrian), ~replace_na(.x, 0))) %>%
+  mutate(accident_rate = ((1000000 * accidents) / (365 * 7 * AADT * LENGTH)), .after = accidents) %>%
+  st_sf(sf_column_name = 'geometry')
+```
+
+```{r}
+# Create tooltip labels for leaflet map
+accidents_by_road$label <-
+  paste0("<b>", accidents_by_road$RTE_NME, "</b>",
+         "<hr style='margin-top: 2px; margin-bottom: 4px'>",
+         ifelse(test = !is.na(accidents_by_road$AADT), 
+                yes = paste0("<b>AADT:</b> ", accidents_by_road$AADT, "<br>",
+                             "<b>Accident Rate:</b> ", 
+                             round(accidents_by_road$accident_rate, digits = 1), 
+                             "<br>"),
+                no = ""),
+         ifelse(test = accidents_by_road$accidents != 0, 
+                yes = paste0("<b>Total Accidents:</b> ", accidents_by_road$accidents, "<br>",
+                             "<b>Injury Accidents:</b> ", accidents_by_road$injury, " (", 
+                             percent(accidents_by_road$injury_pct, accuracy = 0.1), ")<br>",
+                             "<b>Hit-and-Runs:</b> ", accidents_by_road$hit_and_run, " (",
+                             percent(accidents_by_road$hit_and_run_pct, accuracy = 0.1), ")<br>",
+                             "<b>Pedestrian Collisions:</b> ", accidents_by_road$pedestrian),
+                no = paste0("<b>Total Accidents:</b> ", accidents_by_road$accidents, 
+                            ifelse(test = !is.na(accidents_by_road$accident_rate), 
+                                   yes = paste0(" (", percent(accidents_by_road$accident_rate, accuracy = 0.01), ")<br>"),
+                                   no =  "<br>")))) %>% 
+  lapply(htmltools::HTML)
+```
+
+```{r}
+# Prepare data for data table modal
+accidents_by_road_table <- accidents_by_road %>%
+  st_set_geometry(st_centroid(accidents_by_road$geometry)) %>%
+  filter(!(RTE_NME %in% c("--", "."))) %>%
+  transmute(Locate = sapply(X = 1:n(),
+                            FUN =  function(i) {
+                              as.character(
+                                actionButton(
+                                  inputId = paste0("button_", i),
+                                  label = "", 
+                                  icon = icon("map-marker"),
+                                  onclick = "Shiny.onInputChange('locate_button', this.id)"
+                                )
+                              )
+                            }),
+            Road = RTE_NME,
+            `Length (mi.)` = round(LENGTH, digits = 3),
+            AADT = as.integer(AADT),
+            Accidents = as.integer(accidents),
+            `Accident Rate` = round(accident_rate, digits = 1),
+            `Injury Accidents` = as.integer(injury),
+            `Injury %` = round(injury_pct, digits = 3),
+            `Hit-and-Runs` = as.integer(hit_and_run),
+            `Hit-and-Run %` = round(hit_and_run_pct, digits = 3),
+            `Pedestrian Collisions` = as.integer(pedestrian)) %>%
+  group_by(Road) %>%
+  mutate(Segment = 1:n(), .after = Road) %>%
+  ungroup()
+```
+
+```{r}
+# Prepare plot data
+plot_data_by_year <- accidents_to_roads %>%
+  group_by(Year = as.factor(year)) %>%
+  summarize(`Total Accidents` = n(), 
+            `Injury Accidents` = sum(injury, na.rm = T), 
+            `Injury Percentage` = `Injury Accidents` / `Total Accidents`,
+            `Hit-and-Runs` = sum(hit_and_run, na.rm = T), 
+            `Hit-and-Run Percentage` = `Hit-and-Runs` / `Total Accidents`,
+            `Pedestrian Collisions` = sum(pedestrian, na.rm = T))
+
+# Create list for storing plots
+plots <- list()
+
+# Generate empty AADT plot for sidebar
+plots$AADT <- ggplot() + theme_void() + theme(axis.line=element_blank())
+
+# Generate empty accident rate plot for sidebar
+plots$accident_rate <- ggplot() + theme_void() + theme(axis.line=element_blank())
+
+# Generate total accidents by year plot for sidebar
+plots$accidents <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Total Accidents`, fill = Year, text = `Total Accidents`)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  theme(text = element_text(size = 8), legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate injury accidents by year plot for sidebar
+plots$injury <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Injury Accidents`, fill = Year, text = `Injury Accidents`)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  theme(text = element_text(size = 8), legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate injury percentage by year plot for sidebar
+plots$injury_pct <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Injury Percentage`, fill = Year, 
+             text = percent(`Injury Percentage`, accuracy = 0.1))) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  theme_bw() +
+  theme(text = element_text(size = 8), legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate hit-and-runs by year plot for sidebar
+plots$hit_and_run <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Hit-and-Runs`, fill = Year, text = `Hit-and-Runs`)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  theme(text = element_text(size = 8), legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate hit-and-run percentage by year plot for sidebar
+plots$hit_and_run_pct <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Hit-and-Run Percentage`, fill = Year, 
+             text = percent(`Hit-and-Run Percentage`, accuracy = 0.1))) +
+  geom_bar(stat = "identity") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  theme_bw() +
+  theme(text = element_text(size = 8), legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate pedestrian collisions by year plot for sidebar
+plots$pedestrian <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Pedestrian Collisions`, fill = Year, text = `Pedestrian Collisions`)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  theme(text = element_text(size = 8), legend.position = "none") +  
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate total accidents by year plot for info modal
+plots$total_accidents_by_year <- plot_data_by_year %>%
+  ggplot(aes(x = Year, y = `Total Accidents`, fill = Year, label = `Total Accidents`)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Number of Nashville Traffic Accidents Each Year", 
+       caption= "*Impacted by COVID-19 Pandemic") +
+  scale_x_discrete(labels = c("2014", "2015", "2016", "2017", "2018", "2019", "2020*", "2021*")) +
+  geom_text(position = position_dodge(width = 0.9), vjust = -0.5,  size = 5) +
+  scale_y_continuous(expand = expansion(mult = c(0.0, 0.1))) +
+  theme_minimal() +
+  theme(text = element_text(size = 18), 
+        plot.title = element_text(hjust = 0.5, margin = margin(0, 0, 20, 0)),
+        legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+
+# Generate injury percentage by year plot for info modal
+plots$injury_pct_by_year <- plot_data_by_year %>%
+  ggplot(aes(x = Year, 
+             y = `Injury Percentage`, 
+             fill = Year, 
+             label = percent(`Injury Percentage`, accuracy = 0.1))) +
+  geom_bar(stat = "identity") +
+  ggtitle("Percentage of Nashville Traffic Accidents Resulting in Injury Each Year") +
+  geom_text(position = position_dodge(width = 0.9), vjust = -0.5,  size = 5) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), 
+                     expand = expansion(mult = c(0.0, 0.1))) +
+  theme_minimal() +
+  theme(text = element_text(size = 18), 
+        plot.title = element_text(hjust = 0.5, margin = margin(0, 0, 20, 0)),
+        legend.position = "none") +
+  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
+```
+
+```{r}
+# Save datasets as rds files
+write_rds(roads, "../shiny_app/data/roads.rds")
+write_rds(accidents, "../shiny_app/data/accidents.rds")
+write_rds(accidents_to_roads, "../shiny_app/data/accidents_to_roads.rds")
+write_rds(accidents_by_road, "../shiny_app/data/accidents_by_road.rds")
+write_rds(accidents_by_road_table, "../shiny_app/data/accidents_by_road_table.rds")
+write_rds(plots, "../shiny_app/data/plots.rds")
+```

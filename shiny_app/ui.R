@@ -1,15 +1,14 @@
-library(tidyverse)
 library(shiny)
+library(tidyverse)
+library(scales)
+library(rrapply)
+library(sf)
 library(leaflet)
 library(leaflet.extras)
-library(sf)
-library(scales)
-library(htmltools)
 library(shinyBS)
 library(shinyglide)
-library(wesanderson)
 library(plotly)
-library(rrapply)
+library(DT)
 
 shinyUI(
   tagList(
@@ -20,7 +19,7 @@ shinyUI(
         tags$head(includeCSS("www/styles.css")),
         leafletOutput("mymap", width = "100%", height = "100%"),
         absolutePanel(
-          id = "sidePanel", 
+          id = "side_panel", 
           class = "panel panel-default", 
           fixed = TRUE,
           draggable = FALSE, 
@@ -41,7 +40,15 @@ shinyUI(
                          "Injury Percentage",
                          "Hit-and-Runs",
                          "Hit-and-Run Percentage",
-                         "Pedestrian Collisions")
+                         "Pedestrian Collisions"),
+            selected = "Accident Rate (per MVMT)"
+          ),
+          conditionalPanel(
+            condition = "input.map_input == 'Annual Average Daily Traffic (AADT)'",       
+            helpText(
+              HTML("Estimates Based on 2020 Traffic Counts (Pre-Pandemic)"),
+              style = "padding-left: 10px"
+            )
           ),
           conditionalPanel(
             condition = "input.map_input == 'Accident Rate (per MVMT)'",       
@@ -61,57 +68,12 @@ shinyUI(
           )
         )
       ),
-      tags$head(tags$style(HTML( '.has-feedback .form-control { padding-right: 0px }' ))),
       bsModal(
-        id = "tableModal", 
-        title = HTML("<b>Accidents by Roadway Segment</b>"), 
-        trigger = "tableButton", 
+        id = "table_modal",
+        title = HTML("<b>Accidents by Road Segment</b>"),
+        trigger = "table_button",
         size = "large",
-        div(
-          DTOutput('data_table'), 
-          style = "font-size: 100%",
-          align = "center")
-      ),
-      bsModal(
-        id = "aboutModal", 
-        title = HTML("<b>About this Application</b>"), 
-        trigger = "aboutButton", 
-        size = "large",
-        div(
-          style = "display: inline-block; vertical-align: bottom; min-width: 100%;",
-          column(
-            width = 6, 
-            style = "padding-left: 0",
-            h4("Data Sources", style = "margin-top: 15px"),
-            tags$span("Metro Nashville Police Department traffic accident data was obtained from the ",
-                      tags$a("Nashville Open Data Portal", 
-                             href = "https://data.nashville.gov/Police/Traffic-Accidents/6v6w-hpcw", 
-                             target = "_blank", 
-                             .noWS = "after"),
-                      ". Road centerlines and traffic volume data were obtained by request from the ",
-                      tags$a("Tennessee Department of Transportation",
-                             href = "https://www.tn.gov/tdot/long-range-planning-home/longrange-road-inventory/longrange-road-inventory-trims-data-request.html",
-                             target = "_blank",
-                             .noWS = "after"),
-                      ".", style = "font-size: 14px;"),
-            br(),
-            h4("Application Author", style = "margin-top: 25px"),
-            tags$span("Hello, my name is ",
-                      tags$a("Rohit Venkat", 
-                             href = "https://www.linkedin.com/in/rohit-venkat/", 
-                             target = "_blank", 
-                             .noWS = "after"),
-                      "! I am a data scientist-in-training at Nashville Software School.", 
-                      style = "font-size: 14px")
-          ),
-          column(
-            width = 6, 
-            img(src = "logo.png", style = "height: 200px; display: block; \
-                                           margin-top: 15px; margin-bottom: 10px; \
-                                           margin-right: auto; margin-left: auto;"
-            )
-          )
-        )
+        DTOutput('data_table')
       )
     )
   )

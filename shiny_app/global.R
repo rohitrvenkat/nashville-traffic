@@ -1,55 +1,27 @@
-library(tidyverse)
 library(shiny)
+library(tidyverse)
+library(scales)
+library(rrapply)
+library(sf)
 library(leaflet)
 library(leaflet.extras)
-library(sf)
-library(scales)
-library(htmltools)
 library(shinyBS)
 library(shinyglide)
-library(wesanderson)
 library(plotly)
-library(rrapply)
 library(DT)
 
-# Read in rds datasets
-accidents_by_road <- readRDS("data/accidents_by_road.rds")
-accidents_to_roads <- readRDS("data/accidents_to_roads.rds")
+# Read in preprocessed datasets
+accidents_by_road <- read_rds("data/accidents_by_road.rds")
+accidents_by_road_table <- read_rds("data/accidents_by_road_table.rds")
+plots <- read_rds("data/plots.rds")
 
-# Prepare data for table
-accidents_by_road_DT <- accidents_by_road %>%
-  transmute(Locate = sapply(X = 1:n(),
-                            FUN =  function(i) {
-                              as.character(
-                                actionButton(
-                                  inputId = paste0("button_", i),
-                                  label = "", 
-                                  icon = icon("map-marker"),
-                                  onclick = "Shiny.onInputChange('locateButton', this.id)"
-                                )
-                              )
-                            }),
-            Road = RTE_NME,
-            `Length (mi.)` = round(LENGTH, digits = 3),
-            AADT = as.integer(AADT),
-            Accidents = as.integer(accidents),
-            `Accident Rate` = round(accident_rate, digits = 1),
-            `Injury Accidents` = as.integer(injury),
-            `Injury %` = round(injury_pct, digits = 3),
-            `Hit-and-Runs` = as.integer(hit_and_run),
-            `Hit-and-Run %` = round(hit_and_run_pct, digits = 3),
-            `Pedestrian Collisions` = as.integer(pedestrian)) %>%
-  group_by(Road) %>%
-  mutate(Segment = 1:n(), .after = Road) %>%
-  ungroup()
-
-
+# Create color palettes for map inputs
 RdYlBu_pal <- colorNumeric(palette = "RdYlBu", domain = NULL, na.color = "#E5E5E5", reverse = T)
-viridis_pal <- colorNumeric(palette = "viridis", domain = NULL, na.color = "", reverse = F)
-AADT_pal <- colorQuantile(palette = "RdYlBu", probs = c(seq(0, 0.75, 0.25), 0.85, 0.9, 0.95, 0.975, 1), domain = NULL, na.color = "", reverse = T)
-accident_rate_pal <- colorQuantile(palette = "RdYlBu", probs = c(0, 0.25, 0.5, 0.7, 0.8, 0.85, 0.9, 0.95, 0.975, 1), domain = NULL, na.color = "", reverse = T)
-injury_pct_pal <- colorQuantile(palette = "RdYlBu", probs = c(0, 0.15, 0.3, 0.45, 0.6, 0.7, 0.8, 0.9, 1), domain = NULL, na.color = "#E5E5E5", reverse = T)
-hit_and_run_pct_pal <- colorQuantile(palette = "RdYlBu", probs = c(0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1), domain = NULL, na.color = "#E5E5E5", reverse = T)
+viridis_pal <- colorNumeric(palette = "viridis", domain = NULL, na.color = "#E5E5E5", reverse = F)
+AADT_pal <- colorQuantile(palette = "RdYlBu", domain = NULL, probs = c(0, 0.25, 0.5, 0.75, 0.85, 0.9, 0.95, 0.975, 1), na.color = "", reverse = T)
+accident_rate_pal <- colorQuantile(palette = "RdYlBu", domain = NULL, probs = c(0, 0.25, 0.5, 0.7, 0.8, 0.85, 0.9, 0.95, 0.975, 1), na.color = "", reverse = T)
+injury_pct_pal <- colorQuantile(palette = "RdYlBu", domain = NULL, probs = c(0, 0.15, 0.3, 0.45, 0.6, 0.7, 0.8, 0.9, 1), na.color = "", reverse = T)
+hit_and_run_pct_pal <- colorQuantile(palette = "RdYlBu", domain = NULL, probs = c(0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1), na.color = "", reverse = T)
 
 injury_pct_filtered <- ifelse(accidents_by_road$accidents >= 10, accidents_by_road$injury_pct, NA)
 hit_and_run_pct_filtered <- ifelse(accidents_by_road$accidents >= 10, accidents_by_road$hit_and_run_pct, NA)
@@ -87,10 +59,10 @@ freeways <- accidents_by_road %>%
   filter(FUNC_CLASS %in% c("U / FWY OR EXP"))
 
 arterial_roads <- accidents_by_road %>%
-  filter(FUNC_CLASS %in% c("R / MIN ART",  "U / MIN ART", "R / OTH PRIN ART", "U / MIN ART", "U OTH PRIN  ART"))
+  filter(FUNC_CLASS %in% c("R / MIN ART", "U / MIN ART", "R / OTH PRIN ART", "U OTH PRIN  ART"))
 
 collector_roads <- accidents_by_road %>%
-  filter(FUNC_CLASS %in% c("R / MAJ COL", "U / MAJ COL", "R / MIN COL"))
+  filter(FUNC_CLASS %in% c("R / MAJ COL", "U / MAJ COL", "R / MIN COL", "U / MIN COL"))
 
 local_roads <- accidents_by_road %>%
   filter(FUNC_CLASS %in% c("R / LOCAL", "U / LOCAL"))
@@ -103,15 +75,15 @@ line_weights <- bind_cols(
     option = c("default", "highlight")
   ),
   weight = c(0.1, 0.2, 0.25, 0.5, 0.5, 1, 1, 2, 1.5, 3,
-             0.5, 1, 0.75, 1.5, 1, 2, 1.5, 3, 2, 3,
-             1, 2, 1.5, 3, 2, 3, 2.5, 3.75, 3, 4.5,
-             2, 3, 2.5, 3.75, 3, 4.5, 3.5, 5.25, 4.5, 6.75,
-             3, 4.5, 3.5, 5.25, 4, 6, 5, 7.5, 6, 9)) %>% 
+             0.75, 1.5, 1, 2, 1.5, 3, 2, 3, 3, 4.5,
+             1.5, 3, 2, 3, 2.5, 3.75, 3, 4.5, 4, 6,
+             2.5, 3.75, 3, 4.5, 3.5, 5.25, 4.5, 6.75, 5.5, 8.25,
+             3.5, 5.25, 4, 6, 5, 7.5, 6, 9, 8, 12)) %>% 
   group_by(road, option, zoom) %>%
   summarize(weight = list(weight), .groups = "drop") %>%
   rrapply(how = "unmelt")
 
-# Initialize leaflet map function
+# Initialize leaflet map
 draw_base_map <- function() {
   
   leaflet(options = leafletOptions(minZoom = 12, maxZoom = 18, dragging = T)) %>%
@@ -125,31 +97,21 @@ draw_base_map <- function() {
     addResetMapButton() %>%
     addEasyButton(
       easyButton(
-        icon = "fa-bar-chart",
-        title = "Presentation",
-        onClick = JS("
-          function(btn, map) {
-            Shiny.onInputChange('presentationButton', Math.random());
-          }")
-      )
-    ) %>%
-    addEasyButton(
-      easyButton(
         icon = "fa-table",
-        title = "Table",
+        title = "Data Table",
         onClick = JS("
           function(btn, map) {
-            Shiny.onInputChange('tableButton', Math.random());
+            Shiny.onInputChange('table_button', Math.random());
           }")
       )
     ) %>%
     addEasyButton(
       easyButton(
         icon = "fa-info",
-        title = "About",
+        title = "Info",
         onClick = JS("
           function(btn, map) {
-            Shiny.onInputChange('aboutButton', Math.random());
+            Shiny.onInputChange('info_button', Math.random());
           }")
       )
     ) %>%
@@ -161,7 +123,7 @@ draw_base_map <- function() {
                      position = "bottomleft")
 }
 
-# Update leaflet map function
+# Update leaflet map
 update_map <- function(mymap, zoom, map_input) {
   
   leafletProxy(mymap) %>%
@@ -174,8 +136,7 @@ update_map <- function(mymap, zoom, map_input) {
                  weight = line_weights$local_roads$default[[zoom]],
                  highlight = highlightOptions(
                    weight = line_weights$local_roads$highlight[[zoom]],
-                   fillOpacity = 1,
-                   bringToFront = F)) %>%      
+                   bringToFront = F)) %>%
     addPolylines(data = collector_roads,
                  layerId = ~paste(ID_NUMBER, BLM, ELM, sep = "_"),
                  group = "Collector Roads",
@@ -185,7 +146,7 @@ update_map <- function(mymap, zoom, map_input) {
                  weight = line_weights$collector_roads$default[[zoom]],
                  highlight = highlightOptions(
                    weight = line_weights$collector_roads$highlight[[zoom]],
-                   fillOpacity = 1,
+                   opacity = 1,
                    bringToFront = F)) %>%
     addPolylines(data = arterial_roads,
                  layerId = ~paste(ID_NUMBER, BLM, ELM, sep = "_"),
@@ -196,7 +157,7 @@ update_map <- function(mymap, zoom, map_input) {
                  weight = line_weights$arterial_roads$default[[zoom]],
                  highlight = highlightOptions(
                    weight = line_weights$arterial_roads$highlight[[zoom]],
-                   fillOpacity = 1,
+                   opacity = 1,
                    bringToFront = F)) %>%
     addPolylines(data = freeways,
                  layerId = ~paste(ID_NUMBER, BLM, ELM, sep = "_"),
@@ -207,7 +168,7 @@ update_map <- function(mymap, zoom, map_input) {
                  weight = line_weights$freeways$default[[zoom]],
                  highlight = highlightOptions(
                    weight = line_weights$freeways$highlight[[zoom]],
-                   fillOpacity = 1,
+                   opacity = 1,
                    bringToFront = F)) %>%
     addPolylines(data = interstates,
                  layerId = ~paste(ID_NUMBER, BLM, ELM, sep = "_"),
@@ -218,21 +179,22 @@ update_map <- function(mymap, zoom, map_input) {
                  weight = line_weights$interstates$default[[zoom]],
                  highlight = highlightOptions(
                    weight = line_weights$interstates$highlight[[zoom]],
-                   fillOpacity = 1,
+                   opacity = 1,
                    bringToFront = F))
 }
 
 # Update map view based on road segment location
 update_map_view <- function(mymap, coordinates) {
+  
   leafletProxy(mymap) %>%
-    setView(lng = coordinates[1], lat = coordinates[2], zoom = 15)
+    setView(lng = coordinates[1], lat = coordinates[2], zoom = 16)
 }
 
 # Update leaflet map legend based on map input
 update_map_legend <- function(mymap, map_input, title) {
 
   if(map_input %in% c("AADT", "accident_rate", "injury_pct", "hit_and_run_pct")) {
-    
+
     leafletProxy(mymap) %>%
       clearControls() %>%
       addLegend(
@@ -242,7 +204,7 @@ update_map_legend <- function(mymap, map_input, title) {
         title = title,
         opacity = 1
       )
-    
+
   } else if(map_input %in% c("pedestrian")) {
 
     leafletProxy(mymap, data = accidents_by_road) %>%
@@ -255,9 +217,9 @@ update_map_legend <- function(mymap, map_input, title) {
         title = "Pedestrian<br>Collisions",
         opacity = 1
       )
-    
+
   } else {
-    
+
     leafletProxy(mymap, data = accidents_by_road) %>%
       clearControls() %>%
       addLegend(
@@ -271,86 +233,7 @@ update_map_legend <- function(mymap, map_input, title) {
   }
 }
 
-# Prepare plot data
-plot_data_by_year <- accidents_to_roads %>%
-  group_by(Year = as.factor(year)) %>%
-  summarize(`Total Accidents` = n(), 
-            `Injury Accidents` = sum(injury, na.rm = T), 
-            `Injury Percentage` = `Injury Accidents` / `Total Accidents`,
-            `Hit-and-Runs` = sum(hit_and_run, na.rm = T), 
-            `Hit-and-Run Percentage` = `Hit-and-Runs` / `Total Accidents`,
-            `Pedestrian Collisions` = sum(pedestrian, na.rm = T))
-
-# Create list for storing plots
-plots <- list()
-
-plots$AADT <- ggplot() + theme_void() + theme(axis.line=element_blank())
-
-plots$accidents <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Total Accidents`, fill = Year, text = `Total Accidents`)) +
-  geom_bar(stat = "identity") +
-  theme_bw() +
-  theme(text = element_text(size = 8), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$accident_rate <- ggplot() + theme_void() + theme(axis.line=element_blank())
-
-plots$injury <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Injury Accidents`, fill = Year, text = `Injury Accidents`)) +
-  geom_bar(stat = "identity") +
-  theme_bw() +
-  theme(text = element_text(size = 8), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$injury_pct <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Injury Percentage`, fill = Year, 
-             text = percent(`Injury Percentage`, accuracy = 0.1))) +
-  geom_bar(stat = "identity") +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
-  theme_bw() +
-  theme(text = element_text(size = 8), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$hit_and_run <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Hit-and-Runs`, fill = Year, text = `Hit-and-Runs`)) +
-  geom_bar(stat = "identity") +
-  theme_bw() +
-  theme(text = element_text(size = 8), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$hit_and_run_pct <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Hit-and-Run Percentage`, fill = Year, 
-             text = percent(`Hit-and-Run Percentage`, accuracy = 0.1))) +
-  geom_bar(stat = "identity") +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
-  theme_bw() +
-  theme(text = element_text(size = 8), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$pedestrian <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Pedestrian Collisions`, fill = Year, text = `Pedestrian Collisions`)) +
-  geom_bar(stat = "identity") +
-  theme_bw() +
-  theme(text = element_text(size = 8), legend.position = "none") +  
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$total_accidents_by_year <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Total Accidents`, fill = Year, label = `Total Accidents`)) +
-  geom_bar(stat = "identity") +
-  geom_text(position = position_dodge(width = 0.9), vjust = -0.5,  size = 5) +
-  theme_minimal() +
-  theme(text = element_text(size = 18), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
-plots$injury_pct_by_year <- plot_data_by_year %>%
-  ggplot(aes(x = Year, y = `Injury Percentage`, fill = Year, label = percent(`Injury Percentage`, accuracy = 0.1))) +
-  geom_bar(stat = "identity") +
-  geom_text(position = position_dodge(width = 0.9), vjust = -0.5,  size = 5) +
-  scale_y_continuous(labels = percent_format(accuracy = 1)) +
-  theme_minimal() +
-  theme(text = element_text(size = 18), legend.position = "none") +
-  scale_fill_manual(values = wes_palette("Darjeeling1", n = 8, type = "continuous"))
-
+# Convert zoom numeric to string
 check_zoom <- function(zoom) {
   case_when(
     zoom == 12 ~ "zoom_12",
@@ -361,6 +244,7 @@ check_zoom <- function(zoom) {
   )
 }
 
+# Convert map input to column name
 parse_map_input <- function(map_input) {
   case_when(
     map_input == "Annual Average Daily Traffic (AADT)" ~ "AADT",
@@ -371,19 +255,173 @@ parse_map_input <- function(map_input) {
     map_input == "Hit-and-Runs" ~ "hit_and_run",
     map_input == "Hit-and-Run Percentage" ~ "hit_and_run_pct",
     map_input == "Pedestrian Collisions" ~ "pedestrian",
-    map_input == "Tree Collisions" ~ "tree",
-    map_input == "Animal Collisions" ~ "animal",
-    map_input == "Mailbox Collisions" ~ "mailbox",
   )
 }
 
+# Convert glide index to info modal title
 check_glide_index <- function(glide_index) {
   case_when(
-    glide_index == 0 ~ "Number of Nashville Traffic Accidents Each Year",
-    glide_index == 1 ~ "Percentage of Nashville Traffic Accidents Resulting in Injury Each Year",
-    glide_index == 2 ~ "Root Causes of Nashville's Traffic Problem",
-    glide_index == 3 ~ "Some Scary Statistics",
-    glide_index == 4 ~ "Some More Scary Statistics",
-    glide_index == 5 ~ "Using Data Analytics to Evaluate Trafffic Accident Risk for Nashville Roadways"
+    glide_index == 0 ~ "Evaluating Traffic Accident Risk for Nashville Roadways",
+    glide_index == 1 ~ "Traffic Accidents Are on the Rise in Nashville",
+    glide_index == 2 ~ "Nashville Roadways Are Becoming Less Safe",
+    glide_index == 3 ~ "Why is Nashville's Traffic Situation Worsening?",
+    glide_index == 4 ~ "Traffic Fatalities Are an Unfortunate Result of a Worsening Traffic Situation",
+    glide_index == 5 ~ "Nashville: By the Numbers",
+    glide_index == 6 ~ "About This App",
+    glide_index == 7 ~ "Acknowledgements"
   )
 }
+
+# Create info modal content
+info_modal <- modalDialog(
+  title = htmlOutput("title"),
+  footer = NULL,
+  size = "l",
+  easyClose = T,
+  fade = T,
+  glide(
+    id = "myglide",
+    screen(
+      column(
+        width = 12,
+        align = "center",
+        tags$img(src = "traffic_skyline_logo.png", style = "height: 400px;"),
+        tags$span(
+          HTML("This app aims to identify Nashville roadways that have an increased risk for traffic accidents<br>
+               to help prioritize road infrastructure projects for improving traffic safety"),
+          style = "font-size: 18px; text-align: center; padding: 20px 15px 10px; display: inline-block"
+        )
+      )
+    ),
+    screen(
+      column(
+        width = 12,
+        tags$br(),
+        tags$br(),
+        plotOutput("total_accidents_by_year")
+      )
+    ),
+    screen(
+      column(
+        width = 12,
+        tags$br(),
+        tags$br(),
+        plotOutput("injury_pct_by_year")
+      )
+    ),
+    screen(
+      column(
+        width = 12,
+        tags$br(),
+        tags$span("1. Overreliance on motor vehicles",
+                  style = "font-size: 18px; margin-bottom: 15px; padding-left: 95px; display: inline-block"),
+        tags$span("2. Lack of existing infrastructure to easily implement mass transit",
+                  style = "font-size: 18px; margin-bottom: 15px; padding-left: 95px; display: inline-block"),
+        tags$span("3. Underdeveloped neighborhood infrastructure (sidewalks, bikeways, greenways)",
+                  style = "font-size: 18px; margin-bottom: 15px; padding-left: 95px; display: inline-block"),
+        tags$span("4. Rapid population growth leading to strained roadways and traffic congestion",
+                  style = "font-size: 18px; margin-bottom: 30px; padding-left: 95px; display: inline-block"),
+        column(
+          width = 12,
+          align = "center",
+          tags$img(src = "transportation_mode.png", style = "height: 275px;")
+        )
+      )
+    ),
+    screen(
+      column(
+        width = 12,
+        align = "center",
+        tags$br(),
+        tags$br(),
+        tags$img(src = "traffic_deaths.png", style = "width: 100%")
+      )
+    ),
+    screen(
+      column(
+        width = 12,
+        align = "center",
+        tags$br(),
+        tags$br(),
+        tags$img(src = "ksi_statistics.png", style = "width: 100%")
+      )
+    ),
+    screen(
+      column(
+        width = 10,
+        offset = 1,
+        style = "padding-left: 0; padding-top: 30px",
+        tags$span(
+          HTML("Understanding traffic accident patterns through data analytics and visualization provides
+               the ability to identify and implement traffic safety improvement strategies, including but
+               not limited to improved roadway design and traffic policies. For this app, 234,640 traffic
+               accidents reported to the Metro Nashville Police Department between 2014 - 2021 were mapped
+               to 9,289 Davidson County road segments in order to identify high-risk roadways.<br><br>
+               <b>A few questions this app aims to address:</b><br><br>",
+               "<ul><li>Which roads have the highest traffic accident rates?</li><br>",
+               "<li>Which roads have the highest percentage of traffic accidents resulting in injury?</li><br>",
+               "<li>Which roads have the highest percentage of hit-and-runs?</li><br>",
+               "<li>Which roads have the highest number of pedestrian collisions?</li></ul>"),
+          style = "font-size: 18px"
+        )
+      )
+    ),
+    screen(
+      column(
+        width = 10,
+        offset = 1,
+        style = "padding-left: 0",
+        tags$h3("Data Sources", style = "margin-top: 30px"),
+        tags$span(tags$a("Metro Nashville Police Department",
+                         href = "https://data.nashville.gov/Police/Traffic-Accidents/6v6w-hpcw",
+                         target = "_blank"), br(),
+                  tags$a("Tennessee Department of Transportation",
+                         href = "https://www.tn.gov/tdot/long-range-planning-home/longrange-road-inventory/longrange-road-inventory-trims-data-request.html",
+                         target = "_blank"),
+                  style = "font-size: 16px")
+      ),
+      column(
+        width = 10,
+        offset = 1,
+        style = "padding-left: 0",
+        tags$h3("References & Image Sources", style = "margin-top: 30px"),
+        tags$span(tags$a("Metro Nashville Vision Zero",
+                         href = "https://www.nashville.gov/departments/transportation/plans-and-programs/vision-zero",
+                         target = "_blank"), br(),
+                  tags$a("Federal Highway Administration",
+                         href = "https://safety.fhwa.dot.gov/local_rural/training/fhwasa1210/s3.cfm",
+                         target = "_blank"), br(),
+                  tags$a("Nashville Connector",
+                         href = "https://nashconnector.org/",
+                         target = "_blank"),
+                  style = "font-size: 16px;")
+      ),
+      column(
+        width = 10,
+        offset = 1,
+        style = "padding-left: 0",
+        tags$h3(
+          HTML("Application Author &nbsp"),
+          actionButton(inputId = "github",
+                       label = "",
+                       icon = icon("fab fa-github"),
+                       onclick = "window.open('https://github.com/rohitrvenkat', '_blank')"),
+          actionButton(inputId = "linkedin",
+                       label = "",
+                       icon = icon("fab fa-linkedin"),
+                       onclick = "window.open('https://www.linkedin.com/in/rohit-venkat/', '_blank')"),
+          style = "margin-top: 30px"
+        ),
+        tags$span(
+          HTML("My name is Rohit Venkat, and I am a data scientist-in-training at Nashville Software
+          School! I would like to thank lead instructor Michael Holloway and teaching assistants Alvin
+          Wendt and Veronica Ikeshoji-Orlati for their feedback, suggestions, and support during this
+          project. I would also like to express a special thanks to Jon Slinker and colleagues at TDOT
+          for providing the road centerlines and traffic volume data for this project and for their
+          helpfulness in directing me to resources."),
+          style = "font-size: 16px"
+        )
+      )
+    )
+  )
+)
