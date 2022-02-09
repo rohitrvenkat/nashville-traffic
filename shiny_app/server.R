@@ -98,6 +98,12 @@ shinyServer(function(input, output, session) {
     }
   )
   
+  # Show info modal at startup
+  observeEvent(
+    eventExpr = T,
+    handlerExpr = showModal(info_modal)
+  )
+  
   # Show info modal with button click
   observeEvent(
     eventExpr = input$info_button,

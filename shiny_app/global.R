@@ -86,7 +86,10 @@ line_weights <- bind_cols(
 # Initialize leaflet map
 draw_base_map <- function() {
   
-  leaflet(options = leafletOptions(minZoom = 12, maxZoom = 18, dragging = T)) %>%
+  leaflet(options = leafletOptions(minZoom = 12, 
+                                   maxZoom = 18, 
+                                   dragging = T, 
+                                   attributionControl = F)) %>%
     addProviderTiles(provider = "CartoDB.DarkMatter", group = "Dark Theme") %>%
     addProviderTiles(provider = "CartoDB.Positron", group = "Light Theme") %>%
     setView(lng = -86.7816, lat = 36.1627, zoom = 12) %>%
